@@ -27,5 +27,69 @@ pidstat -wt 查看线程的上下文切换次数
 查看中断次数  cat /proc/interrupts
 RES 重（chong）调度中断 这个中断类型表示唤醒空闲状态的CPU来调度新的任务运行
 
+/proc/stat 系统CPU和任务的统计信息 
+root@joedlut-virtual-machine:/home/joedlut# grep 'CONFIG_HZ=' /boot/config-5.19.0-45-generic 
+CONFIG_HZ=250   每秒发生250次中断  
+
+user 
+nice  低优先级用户态CPU时间 1-19   nice 数值越大优先级越低   -20---19
+system
+idle （id） 空闲时间，不包括等待IO的时间
+iowait (wa) 等待IO的CPU时间
+irq (hi) 硬中断的时间
+softirq (si) 软中断的时间
+steal 被其他虚拟机占用CPU的时间
+
+/proc/[pid]/stat 查看某个进程的CPU使用率 
+注意： 性能分析工具给出的都是间隔一段时间的平均CPU使用率，要注意时间的设置，多个工具对比时，确保使用的相同的间隔时间 
+top  按数字1 查看每个进程的CPU使用率  
+ps 
+pidstat -u  查看某个进程的用户态CPU使用率 跟 内核态CPU使用率
+perf top 实时查看占用CPU时钟数最多的函数或者执行，查找热点函数   采样数需要我们特别注意，采样数过少没有意义
+perf top -g -p pid 
+
+perf record   -g  开启调用关系的采样
+perr report 
+-------------------------------------------------------
+pstree | grep aaa  查看某个进程的父进程
+execsnoop 是一个专门为短时进程设计的工具，通过ftrace监控进程的exec行为，输出短时进程的基本信息，包括进程PID，父进程PID，命令行参数一级执行的结果
+
+top发现CPU使用率很高，但是pidstat -u 看不到占用CPU高的进程可能的原因
+1. 应用直接调用了其他二进制程序，这些程序同样运行时间比较短，通过top工具不容易发现
+2. 应用本身不断的在重启崩溃，启动过程的资源初始化，很可能占用相当多的CPU
+
+pstree  |   execsnoop 
+---------------------------------------------------------------
+iowait升高，进程得不到硬件的响应，长时间处于不可中断状态  D 
+R 进程正在运行，或者进程处在CPU的就绪队列中
+D  
+Z  Zombie 进程已经结束，但是父进程没有回收它的资源
+S  可中断睡眠，进程因为等待某个时间被挂起，进程等待的时间发生，重新唤醒进入R状态
+I  空闲状态，通常指不可中断的内核线程
+T  STOP
+X Dead
+
+一个进程创建了子进程后，应该通过系统调用wait() 或者waitpid() 等待子进程结束，回收子进程的资源； 或者父进程注册SIGCHLD信号的处理函数，异步回收资源
+大量的僵尸进程会用尽PID资源，导致新进程没法创建 
+
+dstat  同时查看CPU跟 IO的使用情况 
+
+You did not select any stats, using -cdngy by default.
+--total-cpu-usage-- -dsk/total- -net/total- ---paging-- ---system--
+usr sys idl wai stl| read  writ| recv  send|  in   out | int   csw 
+  0   0 100   0   0|  47k   18k|   0     0 |   8B 1108B| 364   552 
+  0   0  99   0   0|   0     0 | 120B  794B|   0     0 | 340   566 
+
+pidstat -d -p pid 查看某个进程的IO使用情况
+pidstat -d  查看所有进程的使用IO的情况
+strace -p pid 
+
+pstree -aps pid  |    -a 输出命令行选项 -s 表示进程的父进程
+
+iowait 高并不一定代表IO有性能瓶颈，当系统只有IO类型的进程在运行时，iowait也会很高，但磁盘的读写实际上远没有达到性能瓶颈的程度 
+------------------------------------------------------------------------------------
+中断是一种异步的时间处理机制，可以提高系统的并发处理能力
+为了减少对正常进程运行调度的影响，中断处理程序需要尽可能快的运行。
+中断处理程序在响应中断时，还会临时关闭中断，导致上一次的中断处理完成之前，其他中断都不能被响应，中断可能会丢失
 
 
