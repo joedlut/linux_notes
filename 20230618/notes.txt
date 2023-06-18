@@ -8,9 +8,10 @@ cachetop   每个进程的缓存读写命中情况
 pcstat 文件在缓存中的大小  pcstat /bin/ls 
 
 buffer跟cache都是操作系统管理的，应用程序不能直接控制这些缓存的内容跟生命周期，开发中一般使用专门的缓存组件进一步提升性能，比如redis ; 程序内部使用堆或者栈明确生命内存空间 
+ 
+buffer  磁盘    （文件系统的载体 块设备） 裸磁盘的缓存用的就是buffer   跳过文件系统直接跟磁盘交互裸I/O
+cache   文件   （文件系统）cache
 
-buffer  磁盘
-cache   文件
 
 栈内存 系统自动分配和回收， 一旦程序超过这个局部变量的作用域，栈内存就被自动回收，不会产生内存泄露
 
@@ -21,3 +22,142 @@ memleak  -a -p $(pidof process_name)
 -a 显示每个内存请求的分配请求大小以及地址
 -p 指定pid 
 
+脏页 被应用程序修改过，暂时还没有写入磁盘的数据，先写入磁盘内存才能被释放
+	系统调用 fsync
+        内核线程 pdflush
+
+直接内存回收   内核线程kswapd0 负责定期回收内存， kswapd0  定义了三个内存阈值  pages_min  pages_low  pages_high   剩余内存pages_free
+pages_free < pages_min  可用内存基本耗尽，只有内核可以分配内存  
+pages_min   <pages_free < pages_low   内存不多，kswapd0 执行内存回收，直到剩余内存 > pages_high  ***
+修改pages_min    /proc/sys/vm/min_free_kbytes
+pages_low = pages_min *5 /4
+pages_high = pages_min * 3/2
+
+两种不同的内存回收机制
+文件页的回收，直接回收缓存，或者把脏页写回磁盘后再回收
+匿名页的回收 通过swap机制，把他们写入磁盘后再释放内存 
+
+/proc/sys/vm/swappiness 调整swap使用的积极程度  0-100  数值越大，越倾向使用swap,回收匿名页； 数值越小，越消极使用swap,倾向于回收文件页 
+swappiness 是调整积极程度的权重，即使设置成0 ，当剩余内存 + 文件页 小于 页高阈值的时候，还是会发生swap 
+
+sar -r -S 1  
+-r显示内存使用情况
+-S 显示swap使用情况  
+
+如何查看进程swap的使用量，并且按照使用量进行排序？
+root@joedlut-virtual-machine:/proc/1102# for file in /proc/*/status ; do awk '/VmSwap|Name|^Pid/{printf $2 " " $3}END{print " "}' $file ;done | sort -k3 -nr | head -10 
+mysqld 1102 10980 kB 
+gnome-shell 1262 436 kB 
+gsd-media-keys 1889 288 kB 
+unattended-upgr 930 232 kB 
+gnome-session-b 1218 224 kB 
+gjs 1825 196 kB 
+vim 10566 184 kB 
+tracker-miner-f 1307 176 kB 
+gsd-sharing 1846 172 kB 
+snapd 836 156 kB 
+
+root@joedlut-virtual-machine:/proc/1102# for file in /proc/1102/status ; do awk '/VmSwap|Name|^Pid/{printf $2 " " }END{print " "}' $file ;done 
+mysqld 1102 10980  
+root@joedlut-virtual-machine:/proc/1102# for file in /proc/1102/status ; do awk '/VmSwap|Name|^Pid/{printf $2 " " $3 }END{print " "}' $file ;done 
+mysqld 1102 10980 kB 
+
+root@joedlut-virtual-machine:/proc/1102# cat  -n /proc/1102/status | grep  Pid
+     6  Pid:    1102
+     7  PPid:   1
+     8  TracerPid:      0
+root@joedlut-virtual-machine:/proc/1102# cat  -n /proc/1102/status | grep  Name
+     1  Name:   mysqld
+root@joedlut-virtual-machine:/proc/1102# cat  -n /proc/1102/status | grep  VmSwap
+    31  VmSwap:    10980 kB
+
+
+共享内存 tmpfs 
+
+内存优化的思路
+1.最好禁止swap  或者降低swappiness的值
+2.减少内存的动态分配， 使用内存池，大页
+3. 尽量使用缓存 和 缓冲区来访问数据
+4. 使用cgroups等方式 限制进程的内存使用情况
+5. 通过调整核心应用的 /proc/pid/oom_adj 调整核心应用的oom_score,保证内存紧张核心应用不会被OOM杀死 
+
+LRU算法实际维护两个双向链表，active 活跃的内存页     inactive 非活跃的内存页   越接近尾部，表示内存页越不经常访问。 活跃和非活跃的内存页，按照类型的不同又分为 文件页 跟 匿名页，分别对应缓存回收 跟  swap回收    /proc/meminfo 中可以active ,inactive的大小 
+
+OOM发生  dmesg中可以看到 Out of memory 
+OOM 触发的时机基于虚拟内存 申请的虚拟内存 + 服务器实际已用的内存 > 总的物理内存 触发OOM
+
+第三部分
+---------------------------------------磁盘---------------------------------------------
+每个文件：
+	索引结点  inode 跟文件内容一样，是占用磁盘空间的  inode记录文件的元数据，inode编号，文件大小，访问权限。。。 
+	目录项  dentry 记录文件的名字，索引结点指针 跟其他目录项的关联关系 ； 多个关联的目录项，就构成了文件系统的目录结构（树状结构）； 是内核维护的一个内存数据结构，是一种缓存 
+
+磁盘被文件系统格式化：
+超级块 
+索引结点区
+数据块区
+
+VFS 虚拟文件系统 位于用户进程 跟 文件系统之间，提供统一的接口，对下对接不同的文件系统
+
+I/O的分类 
+1. 缓冲IO  非缓冲IO  是否经过标准库缓存 这的缓冲是标准库内部实现的缓存，并非cache
+2. 直接IO  非直接IO  是否使用操作系统的页缓存         直接IO 系统调用显式设置 O_DIRECT标志|   本质上还是跟文件系统交互
+3. 是否阻塞应用程序运行，  阻塞IO    非阻塞IO（轮询或者事件通知  select/poll）    非阻塞IO O_NONBLOCK 
+4. 是否等待响应结果  同步IO （O_SYNC, O_DSYNC） 应用程序执行IO操作后，要一直等待整个IO完成后，才能获得响应结果   异步IO (O_ASYNC) 应用程序执行IO操作后，不用等待响应，继续执行就可以，等到IO完成后，响应会用事件通知的方式，告诉应用程序 
+
+磁盘观测的指标
+1. 容量
+df磁盘空间还要很多，但是报空间不足，可能是索引结点不够用了
+df -i  查看inode的使用情况
+root@joedlut-virtual-machine:/proc/1102# df -i
+Filesystem                 Inodes  IUsed  IFree IUse% Mounted on
+tmpfs                      251229   1149 250080    1% /run
+/dev/mapper/vgubuntu-root 1146880 308493 838387   27% /
+tmpfs                      251229      1 251228    1% /dev/shm
+tmpfs                      251229      6 251223    1% /run/lock
+/dev/sda2                       0      0      0     - /boot/efi
+tmpfs                       50245     92  50153    1% /run/user/125
+tmpfs                       50245     87  50158    1% /run/user/1000
+
+2.cache 
+cache = 页缓存 + 可回收slab缓存的和 
+root@joedlut-virtual-machine:/proc/1102# cat /proc/meminfo |grep -E "SReclaimable|Cached"
+Cached:           735524 kB
+SwapCached:         1684 kB
+SReclaimable:      86448 kB
+
+目录项 跟 索引结点的缓存观察 
+内核基于slab机制管理目录项 跟 索引结点的缓存   /proc/slabinfo
+root@joedlut-virtual-machine:/proc/1102# cat /proc/slabinfo | grep -E "^#|dentry|inode"
+# name            <active_objs> <num_objs> <objsize> <objperslab> <pagesperslab> : tunables <limit> <batchcount> <sharedfactor> : slabdata <active_slabs> <num_slabs> <sharedavail>
+ovl_inode             66     66    728   22    4 : tunables    0    0    0 : slabdata      3      3      0
+mqueue_inode_cache     17     17    960   17    4 : tunables    0    0    0 : slabdata      1      1      0
+fuse_inode            76     76    832   19    4 : tunables    0    0    0 : slabdata      4      4      0
+ecryptfs_inode_cache      0      0   1024   16    4 : tunables    0    0    0 : slabdata      0      0      0
+fat_inode_cache       20     20    792   20    4 : tunables    0    0    0 : slabdata      1      1      0
+squashfs_inode_cache   1886   1886    704   23    4 : tunables    0    0    0 : slabdata     82     82      0
+ext4_fc_dentry_update      0      0     96   42    1 : tunables    0    0    0 : slabdata      0      0      0
+ext4_inode_cache   23333  24489   1192   27    8 : tunables    0    0    0 : slabdata    907    907      0
+hugetlbfs_inode_cache     48     48    664   24    4 : tunables    0    0    0 : slabdata      2      2      0
+sock_inode_cache     891    950    832   19    4 : tunables    0    0    0 : slabdata     50     50      0
+proc_inode_cache    2187   2208    712   23    4 : tunables    0    0    0 : slabdata     96     96      0
+shmem_inode_cache   3030   3066    776   21    4 : tunables    0    0    0 : slabdata    146    146      0
+inode_cache        17930  21050    640   25    4 : tunables    0    0    0 : slabdata    842    842      0
+dentry             42675  45633    192   21    1 : tunables    0    0    0 : slabdata   2173   2173      0
+
+或者使用slabtop  按c 按照缓存大小排序   按a 按照活跃对象数排序
+Active / Total Objects (% used)    : 510006 / 589402 (86.5%)
+ Active / Total Slabs (% used)      : 17529 / 17529 (100.0%)
+ Active / Total Caches (% used)     : 123 / 175 (70.3%)
+ Active / Total Size (% used)       : 139153.87K / 152113.74K (91.5%)
+ Minimum / Average / Maximum Object : 0.01K / 0.26K / 11.25K
+
+  OBJS ACTIVE  USE OBJ SIZE  SLABS OBJ/SLAB CACHE SIZE NAME                   
+ 24489  23333  95%    1.16K    907       27     29024K ext4_inode_cache
+ 31416  29452  93%    0.57K   1122       28     17952K radix_tree_node
+ 21050  17930  85%    0.62K    842       25     13472K inode_cache
+  3176   3125  98%    4.00K    397        8     12704K kmalloc-4k
+
+
+
+ 
