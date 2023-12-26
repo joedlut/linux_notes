@@ -1,4 +1,5 @@
 just a test
 another test
 
+ubuntu 国内镜像源地址
 https://blog.csdn.net/FL1623863129/article/details/134229831
