@@ -1,0 +1,23 @@
+rsyslogd 占用内存过大 
+
+vim /usr/lib/systemd/system/rsyslog.service
+
+在Service配置中添加MemoryAccounting=yes，MemoryMax=80M，MemoryHigh=8M
+
+MemoryAccounting=yes
+MemoryMax=80M
+MemoryHigh=8M
+
+重启服务 
+systemctl daemon-reload
+systemctl restart rsyslog
+
+
+---------------------------------------------------------------
+
+systemd-journald 占用内存过大 
+
+/etc/systemd/journald.conf  Storage 改为none 
+
+重启服务 
+systemctl restart systemd-journald
