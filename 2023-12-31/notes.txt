@@ -4,6 +4,7 @@ vim /usr/lib/systemd/system/rsyslog.service
 
 在Service配置中添加MemoryAccounting=yes，MemoryMax=80M，MemoryHigh=8M
 
+[Service]
 MemoryAccounting=yes
 MemoryMax=80M
 MemoryHigh=8M
